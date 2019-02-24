@@ -1,0 +1,9 @@
+#! /bin/sh
+
+FSP_WRAPPER="/usr/sbin/fsp_update_wrapper"
+IP="172.16.8.154"
+USER="targets"
+PASSWORD="targets"
+FILE="/nesw_loads/mainline/ci/13770/F7017012MXD_2017_12_12_1005.CON"
+
+${FSP_WRAPPER} ${IP} ${USER} ${PASSWORD} ${FILE}
