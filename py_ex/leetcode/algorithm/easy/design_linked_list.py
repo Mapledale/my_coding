@@ -64,7 +64,7 @@ class MyLinkedList:
         """ Get the value of the index-th node in the linked list.
         If the index is invalid, return -1.
         """
-        if index < 0 or index >= self.size or self.head is None:
+        if index < 0 or index >= self.size:
             return -1
         return self.findIndex(index).val
 
@@ -88,7 +88,7 @@ class MyLinkedList:
         of linked list. If index is greater than the length, the node
         will not be inserted.
         """
-        if index > self.size:
+        if index > self.size or index < 0:
             return -1
         elif index == 0:
             head = ListNode(val)
@@ -111,7 +111,7 @@ class MyLinkedList:
 
     def findIndex(self, index: 'int') -> 'None':
         cur = self.head
-        for _ in range(index):
+        for __ in range(index):
             cur = cur.next
         return cur
 
