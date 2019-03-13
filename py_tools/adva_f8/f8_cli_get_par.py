@@ -36,6 +36,18 @@ class AutoChaseNe(object):
         1/ext-2/n:1/5/c  1/ext-2/n  1/5/c
 
         '''
+        # return self._cli.cli_command('show fiber').cli_attrs
+        fiber_map_raw = self._cli.cli_command('show fiber').cli_attrs
+        fiber_map = []
+        for fiber in fiber_map_raw:
+            ends = fiber.split(':')
+            cards = []
+            ports = []
+            for end in ends:
+                cards.append(end.rsplit('/')[0])
+                ports.append(end.rsplit('/')[1])
+            fiber_map.append((cards, ports))
+        return fiber_map
         return self._cli.cli_command('show fiber').cli_attrs
 
     def is_filter(self, card):
