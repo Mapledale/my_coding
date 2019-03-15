@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 # @Date    : 2019-03-13 13:02:35
 
+import sys
 from AosCLILibrary import AosCLILibrary
 
 
@@ -10,7 +11,7 @@ class AutoChaseNe(object):
     PWD = 'CHGME.1a'
     FILTER_TYPE = ['fd-48e', 'fd-128', '40csm-', '96csm-']
 
-    def __init__(self, ip, ptp):
+    def __init__(self, ip, ptp, rst_file):
         self.ip = ip
         self.ptp_head = ptp
         self.ptp_tail = ''
@@ -18,19 +19,20 @@ class AutoChaseNe(object):
         self.ptp_chain = []
         self.type = 'edge'
         self._cli = AosCLILibrary()
-        print(ip)
         self._cli.cli_open_connection_and_login(ip, self.USER, self.PWD)
-        print('++++++++++++++++++++++++++++++++++++++')
-        print('Connected to node %s!' % ip)
+        self.rst_file = rst_file
+        self.rst_file.write('++++++++++++++++++++++++++++++++++++++\n')
+        self.rst_file.write('Connected to node %s!\n' % ip)
 
     def __del__(self):
         self._cli.cli_close_connection()
-        print('\nDisconnected from node %s!' % self.ip)
-        print('--------------------------------------')
+        self.rst_file.write('\nDisconnected from node %s!\n' % self.ip)
+        self.rst_file.write('--------------------------------------\n')
 
     def update_ptp_chain(self):
         self._update_fiber_map()
-        card_head = self.ptp_head.rsplit('/', 1)[0]
+        self.ptp_chain = []
+        card_head, port_head = self.ptp_head.rsplit('/', 1)
         for fiber in self.fiber_map:
             if card_head in fiber:
                 cards = fiber.keys()
@@ -38,12 +40,17 @@ class AutoChaseNe(object):
                 card_next = cards[0]
                 port_next = fiber[card_next]
                 card_type = self._get_card_type(card_head)
-                chain_ele = {'card': card_head, 'a_end': None,
+                chain_ele = {'card': card_head, 'a_end': port_head,
                              'z_end': fiber[card_head], 'card_type': card_type}
                 self.ptp_chain.append(chain_ele)
                 exit
         self._build_ptp_chain_recur(card_next, port_next)
-        if not self.ptp_chain[-1]['a_end'].startswith('n'):
+        if self.ptp_chain[-1]['a_end'].startswith('n'):
+            if self._is_filter(self.ptp_chain[-1]['card']):
+                self.ptp_chain[-1]['z_end'] = 'ci'
+            else:
+                self.ptp_chain[-1]['z_end'] = 'c'
+        else:
             self.ptp_chain[-1]['z_end'] = 'n'
 
     def _update_fiber_map(self):
@@ -59,6 +66,7 @@ class AutoChaseNe(object):
 
         '''
         # return self._cli.cli_command('show fiber').cli_attrs
+        self.fiber_map = []
         fiber_map_raw = self._cli.cli_command('show fiber').cli_attrs
         for fiber_raw in fiber_map_raw:
             fiber = {}
@@ -68,6 +76,8 @@ class AutoChaseNe(object):
             fiber[c_a] = p_a
             fiber[c_z] = p_z
             self.fiber_map.append(fiber)
+        if not self.fiber_map:
+            raise Exception('Fiber map Empty! Please set fiber map first...')
 
     def _build_ptp_chain_recur(self, card, port):
         recur = False
@@ -163,11 +173,14 @@ class AutoChaseNe(object):
 
         '''
         cmd_show_pm = 'show interface %s opt-phy pm current' % ptp
-        pm = self._cli.cli_command(cmd_show_pm).cli_data
-        pm_curr = pm[0]['pm-data']
-        pm_curr_rx = pm_curr['opt-rx-pwr']
-        pm_curr_tx = pm_curr['opt-tx-pwr']
-        return (pm_curr_rx, pm_curr_tx)
+        try:
+            pm = self._cli.cli_command(cmd_show_pm).cli_data
+            pm_curr = pm[0]['pm-data']
+            pm_curr_rx = pm_curr['opt-rx-pwr']
+            pm_curr_tx = pm_curr['opt-tx-pwr']
+            return (pm_curr_rx, pm_curr_tx)
+        except:
+            return None
 
     def is_ots(self, ptp):
         '''4. search for the port with ots
@@ -185,6 +198,9 @@ class AutoChaseNe(object):
 
         '''
         cmd_ots = 'show interface %s' % ptp
+        port = ptp.rsplit('/', 1)[1]
+        if port.startswith('c'):
+            return False  # c port won't have ots
         comp = self._cli.cli_get_completions(cmd_ots).cli_attrs
         return '%s/ots' % ptp in comp
 
@@ -208,8 +224,11 @@ class AutoChaseNe(object):
 
         '''
         cmd_next_ne = 'show interface %s/ots ots remote-ots-node' % ptp
-        ne_next = self._cli.cli_command(cmd_next_ne).cli_data
-        return ne_next['remote-management-address'][0]
+        try:
+            ne_next = self._cli.cli_command(cmd_next_ne).cli_data
+            return ne_next['remote-management-address'][0]
+        except KeyError:
+            raise Exception('No remote-ots-node! Is OSC down? Please check...')
 
     def get_next_node_ots(self, ptp):
         '''6. get to the next node - its port with ots
@@ -241,111 +260,124 @@ class AutoChaseNe(object):
         return port_id.split('/ots')[0]
 
 
-def show_ne(ip, ptp):
-    ne = AutoChaseNe(ip, ptp)
+def drawProgressBar(percent, barLen=20):
+    sys.stdout.write('\r')
+    progress = ''
+    for i in range(barLen):
+        if i < int(barLen * percent):
+            progress += '='
+        else:
+            progress += ' '
+    sys.stdout.write('[%s] %.2f%%' % (progress, percent * 100))
+    sys.stdout.flush()
+
+
+def show_ne(ip, ptp, rst_file):
+    ne = AutoChaseNe(ip, ptp, rst_file)
+    print('')
+    print('Working on node %s...' % ip)
+    bar_len = 80
+    prgs = 0.05
+    drawProgressBar(prgs, bar_len)
+    prgs = 0.1
+
     ne.update_ptp_chain()
-    # fiber_map = ne._get_fiber_map()
-    # print('\nfiber map:')
-    # for link_name in fiber_map:
-    #     print(link_name)
-
-    # print('\nPTP Chain:')
-    # for e in ne.ptp_chain:
-    #     print(e)
-
-    # ne.update_ne_type()
-    # if ne.type == 'transit':
-    #     recur = True
-    # print('\nNE type is: %s' % ne.type)
+    drawProgressBar(prgs, bar_len)
+    prgs += 0.2
 
     for chain_ele in ne.ptp_chain:
-        print('Card %s: %s' % (ptp['card'], ptp['card_type']))
-        print()
-        if ptp['a_end']:
+        rst_file.write('\nCard %s: %s\n' %
+                       (chain_ele['card'], chain_ele['card_type']))
+        drawProgressBar(prgs, bar_len)
+        if chain_ele['a_end']:
             ptp = chain_ele['card'] + '/' + chain_ele['a_end']
-            print('\tPort %s:' % ptp['a_end'])
+            rst_file.write('\tPort %s:\n' % chain_ele['a_end'])
             pm = ne.get_ptp_power(ptp)
-            print('\t\tTx: %s' % pm[1])
-            print('\t\tRx: %s' % pm[0])
-        if ptp['z_end']:
+            if pm:
+                rst_file.write('\t\tRx: %s\n' % pm[0])
+            else:
+                rst_file.write('\t\tPM reading N/A\n')
+        drawProgressBar(prgs, bar_len)
+        prgs += 0.1
+        if chain_ele['z_end']:
             ptp = chain_ele['card'] + '/' + chain_ele['z_end']
-            print('\tPort %s:' % ptp['a_end'])
+            rst_file.write('\tPort %s:\n' % chain_ele['z_end'])
             pm = ne.get_ptp_power(ptp)
-            print('\t\tTx: %s' % pm[1])
-            print('\t\tRx: %s' % pm[0])
-    # card_type = ne._get_card_type('%s/%s' % (shelf, slot))
-    # print('\nCard Type of %s/%s:' % (shelf, slot))
-    # print('%s' % card_type)
-
-    # pm = ne._get_ptp_power(ptp)
-    # print('\nPM readings of %s:' % ptp)
-    # print('pm_r: %s' % pm[0])
-    # print('pm_t: %s' % pm[1])
-
-    # print('\nIs %s with ots?' % ptp)
-    # print(ne._is_ots(ptp))
-    # print('Is %s with ots?' % '1/5/n')
-    # print(ne._is_ots('1/5/n'))
+            if pm:
+                rst_file.write('\t\tTx: %s\n' % pm[1])
+            else:
+                rst_file.write('\t\tPM reading N/A\n')
+        drawProgressBar(prgs, bar_len)
+        prgs += 0.1
 
     next_ne = {'ip': None, 'ptp': None}
-    ptp_tail_card = ne.ptp_chain[-1].keys()[0]
-    ptp_tail_port = ne.ptp_chain[-1][ptp_tail_card]['z_end']
+    ptp_tail_card = ne.ptp_chain[-1]['card']
+    ptp_tail_port = ne.ptp_chain[-1]['z_end']
     ptp_tail = ptp_tail_card + '/' + ptp_tail_port
     if ne.is_ots(ptp_tail):
         next_ne['ip'] = ne.get_next_node_ip(ptp_tail)
         next_ne['ptp'] = ne.get_next_node_ots(ptp_tail)
-    return next_ne
+    drawProgressBar(1, bar_len)
+    print('')
+    tail = {'ip': ip, 'ptp': ptp_tail}
+    return (tail, next_ne)
 
 
-NE15 = {
-    'ip': '10.16.45.15',
-    'shelf': '1',
-    'slot': 'ext-2',
-    'port': 'n'
-}
+def main(ip, ptp, filename, bidi=False):
+    rst_file = open(filename, 'a')
+    rst_file.write('Start from the filter provided by user...\n')
+    tail, next_ne = show_ne(ip, ptp, rst_file)
+    while next_ne['ip']:
+        tail, next_ne = show_ne(next_ne['ip'], next_ne['ptp'], rst_file)
 
-NE14 = {
-    'ip': '10.16.45.14',
-    'shelf': '1',
-    'slot': '2',
-    'port': 'n'
-}
+    rst_file.write('\n--------------------------------------\n')
+    rst_file.write('Reached the end of OMS. Job done. Bye!\n')
+    rst_file.close()
+    print('\nJob done! Please check %s for the result.' % filename)
 
-NE13 = {
-    'ip': '10.16.45.13',
-    'shelf': '1',
-    'slot': '2',
-    'port': 'n'
-}
-
-NE11 = {
-    'ip': '10.16.45.11',
-    'shelf': '1',
-    'slot': 'ext-1',
-    'port': 'n'
-}
-
-NE12 = {
-    'ip': '10.16.45.12',
-    'shelf': '1',
-    'slot': '2',
-    'port': 'n'
-}
-
-
-def test():
-    nes = [NE14]
-    for ne in nes:
-        show_ne(ne['ip'], ne['shelf'], ne['slot'])
+    if bidi:
+        bidi = False
+        ip = tail['ip']
+        ptp = tail['ptp']
+        main(ip, ptp, filename, bidi)
 
 
 if __name__ == '__main__':
-    ne = NE15
-    ip = ne['ip']
-    shelf = ne['shelf']
-    slot = ne['slot']
-    port = ne['port']
-    ptp = '%s/%s/%s' % (shelf, slot, port)
-    next_ne = show_ne(ip, ptp)
-    while next_ne['ip']:
-        next_ne = show_ne(next_ne['ip'], next_ne['ptp'])
+    argv = sys.argv
+    if len(argv) != 3 and len(argv) != 4 and len(argv) != 5:
+        print('Usage: python auto_chase.py <ip of first ne> ' +
+              '<filter at first ne, e.g. shelf/slot/port> ' +
+              '<uni|bi, default uni> ' +
+              '<filename of result, default auto_chase_result.txt>')
+        sys.exit(1)
+    elif len(argv) == 3:
+        filename = 'auto_chase_result.txt'
+        bidi = False
+    elif len(argv) == 4:
+        filename = 'auto_chase_result.txt'
+        if argv[3] == 'bi':
+            bidi = True
+        else:
+            bidi = False
+    else:
+        filename = argv[4]
+        if argv[3] == 'bi':
+            bidi = True
+        else:
+            bidi = False
+
+    ptp = argv[2]
+    if ptp.count('/') == 1:
+        ptp += '/ci'
+    elif ptp.count('/') == 2:
+        card, port = ptp.rsplit('/', 1)
+        if not port.startswith('c'):
+            port = 'ci'
+            ptp = card + '/' + port
+    else:
+        print('Wrong input for the filter!')
+        sys.exit(1)
+
+    ip = argv[1]
+
+    main(ip, ptp, filename, bidi)
