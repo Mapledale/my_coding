@@ -11,23 +11,17 @@ class AutoChaseNe(object):
     PWD = 'CHGME.1a'
     FILTER_TYPE = ['fd-48e', 'fd-128', '40csm-', '96csm-']
 
-    def __init__(self, ip, ptp, rst_file):
+    def __init__(self, ip, ptp):
         self.ip = ip
         self.ptp_head = ptp
         self.ptp_tail = ''
         self.fiber_map = []
         self.ptp_chain = []
-        self.type = 'edge'
         self._cli = AosCLILibrary()
         self._cli.cli_open_connection_and_login(ip, self.USER, self.PWD)
-        self.rst_file = rst_file
-        self.rst_file.write('++++++++++++++++++++++++++++++++++++++\n')
-        self.rst_file.write('Connected to node %s!\n' % ip)
 
     def __del__(self):
         self._cli.cli_close_connection()
-        self.rst_file.write('\nDisconnected from node %s!\n' % self.ip)
-        self.rst_file.write('--------------------------------------\n')
 
     def update_ptp_chain(self):
         self._update_fiber_map()
@@ -99,14 +93,6 @@ class AutoChaseNe(object):
         self.ptp_chain.append(chain_ele)
         if recur:
             self._build_ptp_chain_recur(card_next, port_next)
-
-    def update_ne_type(self):
-        for ptp in self.ptp_chain:
-            for card in ptp:
-                if self._is_filter(card):
-                    self.type = 'edge'
-                    return
-        self.type = 'transit'
 
     def _is_filter(self, card):
         card_type = self._get_card_type(card)
@@ -272,11 +258,11 @@ def drawProgressBar(percent, barLen=20):
     sys.stdout.flush()
 
 
-def show_ne(ip, ptp, rst_file):
-    ne = AutoChaseNe(ip, ptp, rst_file)
-    print('')
-    print('Working on node %s...' % ip)
-    bar_len = 80
+def show_ne(ip, ptp):
+    ne = AutoChaseNe(ip, ptp)
+
+    print('\nWorking on node %s...' % ip)
+    bar_len = 60
     prgs = 0.05
     drawProgressBar(prgs, bar_len)
     prgs = 0.1
@@ -285,64 +271,92 @@ def show_ne(ip, ptp, rst_file):
     drawProgressBar(prgs, bar_len)
     prgs += 0.2
 
+    ne_txt = '+++++++++++++++++++++++++++++++++++++++++\n'
+    ne_txt += 'Node %s:\n' % ip
     for chain_ele in ne.ptp_chain:
-        rst_file.write('\nCard %s: %s\n' %
-                       (chain_ele['card'], chain_ele['card_type']))
+        ne_txt += '\nCard %s: %s\n' % (
+                  chain_ele['card'], chain_ele['card_type'])
         drawProgressBar(prgs, bar_len)
         if chain_ele['a_end']:
             ptp = chain_ele['card'] + '/' + chain_ele['a_end']
-            rst_file.write('\tPort %s:\n' % chain_ele['a_end'])
+            ne_txt += '\tPort %s:\n' % chain_ele['a_end']
             pm = ne.get_ptp_power(ptp)
             if pm:
-                rst_file.write('\t\tRx: %s\n' % pm[0])
+                ne_txt += '\t\tRx: %s\n' % pm[0]
             else:
-                rst_file.write('\t\tPM reading N/A\n')
+                ne_txt += '\t\tPM reading N/A\n'
         drawProgressBar(prgs, bar_len)
         prgs += 0.1
         if chain_ele['z_end']:
             ptp = chain_ele['card'] + '/' + chain_ele['z_end']
-            rst_file.write('\tPort %s:\n' % chain_ele['z_end'])
+            ne_txt += '\tPort %s:\n' % chain_ele['z_end']
             pm = ne.get_ptp_power(ptp)
             if pm:
-                rst_file.write('\t\tTx: %s\n' % pm[1])
+                ne_txt += '\t\tTx: %s\n' % pm[1]
             else:
-                rst_file.write('\t\tPM reading N/A\n')
+                ne_txt += '\t\tPM reading N/A\n'
         drawProgressBar(prgs, bar_len)
         prgs += 0.1
+    ne_txt += '-----------------------------------------\n'
 
-    next_ne = {'ip': None, 'ptp': None}
     ptp_tail_card = ne.ptp_chain[-1]['card']
     ptp_tail_port = ne.ptp_chain[-1]['z_end']
     ptp_tail = ptp_tail_card + '/' + ptp_tail_port
+    tail = {'ip': ip, 'ptp': ptp_tail}
+
+    next_ne = {'ip': None, 'ptp': None}
     if ne.is_ots(ptp_tail):
         next_ne['ip'] = ne.get_next_node_ip(ptp_tail)
         next_ne['ptp'] = ne.get_next_node_ots(ptp_tail)
+
     drawProgressBar(1, bar_len)
-    print('')
-    tail = {'ip': ip, 'ptp': ptp_tail}
-    return (tail, next_ne)
+    print('\n')
+
+    return (tail, next_ne, ne_txt)
 
 
-def main(ip, ptp, filename, bidi=False):
-    rst_file = open(filename, 'a')
-    rst_file.write('Start from the filter provided by user...\n')
-    tail, next_ne = show_ne(ip, ptp, rst_file)
+def show_oms(ip, ptp, dirc='forward'):
+    msg = '\nAuto_Chase in the %s direction, starting from node %s:' \
+        % (dirc, ip)
+    print(msg)
+
+    oms_txt = '\nAuto_Chase in the %s direction, starting from node %s\n' \
+        % (dirc, ip)
+    if dirc == 'forward':
+        oms_txt += 'Start from the filter provided by user...\n'
+    tail, next_ne, ne_txt = show_ne(ip, ptp)
+    oms_txt += ne_txt
+
     while next_ne['ip']:
-        tail, next_ne = show_ne(next_ne['ip'], next_ne['ptp'], rst_file)
+        tail, next_ne, ne_txt = show_ne(next_ne['ip'], next_ne['ptp'])
+        oms_txt += ne_txt
+    oms_txt += 'Reached the end of OMS.\n'
 
-    rst_file.write('\n--------------------------------------\n')
-    rst_file.write('Reached the end of OMS. Job done. Bye!\n')
-    rst_file.close()
-    print('\nJob done! Please check %s for the result.' % filename)
+    return (tail, oms_txt)
+
+
+def main(ip, ptp, filename, bidi=False, dirc='forward'):
+    tail, rst_txt = show_oms(ip, ptp, dirc)
 
     if bidi:
-        bidi = False
         ip = tail['ip']
         ptp = tail['ptp']
-        main(ip, ptp, filename, bidi)
+        bidi = False
+        dirc = 'reverse'
+        tail, oms_txt = show_oms(ip, ptp, dirc)
+        rst_txt += oms_txt
+
+    rst_txt += '\nJob done. Bye!\n'
+    print('\nJob done! Please check %s for the result.' % filename)\
+
+    with open(filename, 'w') as f:
+        f.write(rst_txt)
 
 
 if __name__ == '__main__':
+    ''' Assign sys.argv to arguments, then call the main script
+    also handle wrong arguments input and print usage
+    '''
     argv = sys.argv
     if len(argv) != 3 and len(argv) != 4 and len(argv) != 5:
         print('Usage: python auto_chase.py <ip of first ne> ' +
@@ -359,7 +373,7 @@ if __name__ == '__main__':
             bidi = True
         else:
             bidi = False
-    else:
+    else:  # len(argv) == 5
         filename = argv[4]
         if argv[3] == 'bi':
             bidi = True
@@ -371,7 +385,7 @@ if __name__ == '__main__':
         ptp += '/ci'
     elif ptp.count('/') == 2:
         card, port = ptp.rsplit('/', 1)
-        if not port.startswith('c'):
+        if not port.startswith('c'):  # ptp_head must be a client port
             port = 'ci'
             ptp = card + '/' + port
     else:
