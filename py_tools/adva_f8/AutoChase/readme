@@ -1,0 +1,8 @@
+AutoChase/
+    __init__.py
+    auto_chase.py
+    gui_tk.py
+    read.me
+
+Usage:
+$ python -m AutoChase.gui_tk
